@@ -1,0 +1,223 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+
+# ============================================
+# 1. PREPARAÇÃO DOS DADOS
+# ============================================
+
+# Copiar o dataframe original para não alterá-lo
+df = dfm.copy()
+
+# Converter datetime para features numéricas úteis
+df['data'] = pd.to_datetime(df['data'])
+df['hora'] = df['data'].dt.hour
+df['dia_semana'] = df['data'].dt.dayofweek
+df['mes'] = df['data'].dt.month
+
+# Tratar variáveis categóricas
+# One-hot encoding para 'terreno'
+df = pd.get_dummies(df, columns=['terreno'], prefix='terreno')
+
+# Converter booleano para numérico
+df['obstaculos'] = df['obstaculos'].astype(int)
+
+# ============================================
+# 2. SEPARAR FEATURES E TARGET
+# ============================================
+
+# Remover colunas que não serão usadas como features
+X = df.drop(['risco', 'data'], axis=1)  # Remove target e data original
+y = df['risco']
+
+# Verificar o balanceamento das classes
+print("Distribuição das classes de risco:")
+print(y.value_counts().sort_index())
+
+# ============================================
+# 3. DIVIDIR EM TREINO E TESTE
+# ============================================
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y,
+    test_size=0.2,  # 20% para teste
+    random_state=42,
+    stratify=y  # Mantém proporção das classes
+)
+
+print(f"\nTamanho do treino: {X_train.shape[0]} amostras")
+print(f"Tamanho do teste: {X_test.shape[0]} amostras")
+
+# ============================================
+# 4. NORMALIZAR DADOS (importante para alguns modelos)
+# ============================================
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# ============================================
+# 5. TREINAR MODELO - RANDOM FOREST
+# ============================================
+
+print("\n" + "="*50)
+print("TREINANDO RANDOM FOREST")
+print("="*50)
+
+rf_model = RandomForestClassifier(
+    n_estimators=100,
+    random_state=42,
+    class_weight='balanced'  # Lida com desbalanceamento
+)
+
+rf_model.fit(X_train_scaled, y_train)
+
+# ============================================
+# 6. AVALIAR O MODELO
+# ============================================
+
+# Previsões
+y_pred = rf_model.predict(X_test_scaled)
+
+# Acurácia
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nAcurácia: {accuracy:.4f} ({accuracy*100:.2f}%)")
+
+# Relatório detalhado
+print("\nRelatório de Classificação:")
+print(classification_report(y_test, y_pred))
+
+# Matriz de confusão
+plt.figure(figsize=(10, 8))
+cm = confusion_matrix(y_test, y_pred)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title('Matriz de Confusão - Random Forest')
+plt.xlabel('Previsto')
+plt.ylabel('Real')
+plt.show()
+
+# ============================================
+# 7. IMPORTÂNCIA DAS FEATURES
+# ============================================
+
+feature_importance = pd.DataFrame({
+    'feature': X.columns,
+    'importance': rf_model.feature_importances_
+}).sort_values('importance', ascending=False)
+
+print("\nTop 10 Features mais importantes:")
+print(feature_importance.head(10))
+
+# Visualizar
+plt.figure(figsize=(10, 6))
+plt.barh(feature_importance['feature'].head(10)[::-1],
+         feature_importance['importance'].head(10)[::-1])
+plt.xlabel('Importância')
+plt.title('Top 10 Features mais Importantes')
+plt.tight_layout()
+plt.show()
+
+# ============================================
+# 8. OTIMIZAÇÃO COM GRID SEARCH (opcional)
+# ============================================
+
+print("\n" + "="*50)
+print("OTIMIZANDO HIPERPARÂMETROS")
+print("="*50)
+
+param_grid = {
+    'n_estimators': [100, 200],
+    'max_depth': [10, 20, None],
+    'min_samples_split': [2, 5],
+    'min_samples_leaf': [1, 2]
+}
+
+grid_search = GridSearchCV(
+    RandomForestClassifier(random_state=42, class_weight='balanced'),
+    param_grid,
+    cv=3,  # 3-fold cross-validation
+    scoring='accuracy',
+    n_jobs=-1
+)
+
+grid_search.fit(X_train_scaled, y_train)
+
+print(f"\nMelhores parâmetros: {grid_search.best_params_}")
+print(f"Melhor acurácia (CV): {grid_search.best_score_:.4f}")
+
+# Melhor modelo
+best_model = grid_search.best_estimator_
+y_pred_best = best_model.predict(X_test_scaled)
+print(f"Acurácia no teste (modelo otimizado): {accuracy_score(y_test, y_pred_best):.4f}")
+
+# ============================================
+# 9. TESTAR COM UM EXEMPLO NOVO (simulação)
+# ============================================
+
+print("\n" + "="*50)
+print("SIMULANDO NOVA OBSERVAÇÃO")
+print("="*50)
+
+# Criar uma nova observação de exemplo
+nova_obs = {
+    'local': 25,
+    'velocidade_vento': 45,
+    'obstaculos': 1,
+    'correnteza': 30,
+    'visibilidade': 70,
+    'hora': 14,
+    'dia_semana': 2,
+    'mes': 6,
+    'terreno_lama': 0,
+    'terreno_navegavel': 1,
+    'terreno_seco': 0,
+    'terreno_asfalto_molhado': 0,
+    'terreno_telhado': 0
+}
+
+# Converter para DataFrame com as mesmas colunas do treino
+nova_obs_df = pd.DataFrame([nova_obs])
+# Garantir que tem todas as colunas
+for col in X.columns:
+    if col not in nova_obs_df.columns:
+        nova_obs_df[col] = 0
+
+nova_obs_df = nova_obs_df[X.columns]  # Ordenar colunas
+
+# Normalizar
+nova_obs_scaled = scaler.transform(nova_obs_df)
+
+# Prever
+predicao = best_model.predict(nova_obs_scaled)
+probabilidades = best_model.predict_proba(nova_obs_scaled)
+
+print(f"Risco previsto: {predicao[0]}")
+print("\nProbabilidades por classe:")
+for i, prob in enumerate(probabilidades[0]):
+    print(f"  Risco {i}: {prob:.2%}")
+
+# ============================================
+# 10. MODELO ALTERNATIVO - GRADIENT BOOSTING
+# ============================================
+
+print("\n" + "="*50)
+print("MODELO ALTERNATIVO - GRADIENT BOOSTING")
+print("="*50)
+
+gb_model = GradientBoostingClassifier(
+    n_estimators=100,
+    random_state=42
+)
+gb_model.fit(X_train_scaled, y_train)
+
+y_pred_gb = gb_model.predict(X_test_scaled)
+print(f"\nAcurácia Gradient Boosting: {accuracy_score(y_test, y_pred_gb):.4f}")
+
+print("\nRelatório Gradient Boosting:")
+print(classification_report(y_test, y_pred_gb))
